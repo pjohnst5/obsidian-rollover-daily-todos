@@ -1139,6 +1139,7 @@ class RolloverTodosPlugin extends obsidian.Plugin {
       rolloverChildren: false,
       rolloverOnFileCreate: true,
       doneStatusMarkers: "xX-",
+      lastRolloverDate: "",
     };
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
@@ -1181,7 +1182,7 @@ class RolloverTodosPlugin extends obsidian.Plugin {
       )
       .filter((file) => file.basename)
       .filter((file) =>
-        this.getFileMoment(file, folder, format).isSameOrBefore(
+        this.getFileMoment(file, folder, format).isBefore(
           todayMoment,
           "day"
         )
@@ -1193,7 +1194,7 @@ class RolloverTodosPlugin extends obsidian.Plugin {
         this.getFileMoment(b, folder, format).valueOf() -
         this.getFileMoment(a, folder, format).valueOf()
     );
-    return sorted[1];
+    return sorted[0];
   }
 
   getFileMoment(file, folder, format) {
@@ -1289,6 +1290,12 @@ class RolloverTodosPlugin extends obsidian.Plugin {
         10000
       );
     } else {
+      // Save today's date before proceeding so that the onLayoutReady startup
+      // check won't trigger a duplicate rollover, even if we return early below
+      // because there is no previous note or no todos to roll over.
+      this.settings.lastRolloverDate = window.moment().format("YYYY-MM-DD");
+      await this.saveSettings();
+
       const { templateHeading, deleteOnComplete, removeEmptyTodos } =
         this.settings;
 
@@ -1450,6 +1457,19 @@ class RolloverTodosPlugin extends obsidian.Plugin {
         this.rollover(file);
       })
     );
+
+    // When the workspace is ready, roll over todos for today's note if it was
+    // pre-created (e.g., on mobile) and rollover hasn't happened yet today.
+    this.app.workspace.onLayoutReady(async () => {
+      if (!this.settings.rolloverOnFileCreate) return;
+      const today = window.moment().format("YYYY-MM-DD");
+      if (this.settings.lastRolloverDate === today) return;
+      // Only proceed if today's daily note already exists (e.g., pre-created on mobile)
+      const allDailyNotes = main.getAllDailyNotes();
+      const todayNote = main.getDailyNote(window.moment(), allDailyNotes);
+      if (!todayNote) return;
+      await this.rollover();
+    });
 
     this.addCommand({
       id: "obsidian-rollover-daily-todos-rollover",
